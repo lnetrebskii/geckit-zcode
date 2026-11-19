@@ -27,10 +27,32 @@ async function candidates(environment) {
   const versions = await readdir(nvm).catch(() => [])
   versions.sort((a, b) => compareVersions(parseVersion(b), parseVersion(a)))
   for (const version of versions) found.push({ path: join(nvm, version, 'bin', 'zcode'), from: 'npm (nvm)' })
+  for (const fnm of fnmDirectories(environment)) {
+    found.push({ path: join(fnm, 'aliases', 'default', 'bin', 'zcode'), from: 'npm (fnm default)' })
+    const installed = await readdir(join(fnm, 'node-versions')).catch(() => [])
+    installed.sort((a, b) => compareVersions(parseVersion(b), parseVersion(a)))
+    for (const version of installed) {
+      found.push({ path: join(fnm, 'node-versions', version, 'installation', 'bin', 'zcode'), from: 'npm (fnm)' })
+    }
+  }
   for (const folder of ['/opt/homebrew/bin', '/usr/local/bin', join(homedir(), '.local', 'bin'), join(homedir(), '.npm-global', 'bin')]) {
     found.push({ path: join(folder, 'zcode'), from: 'npm' })
   }
   return found
+}
+
+/**
+ * Where fnm keeps its installed Nodes, newest layout first. fnm honours
+ * `FNM_DIR`, then `XDG_DATA_HOME`, then falls back to `~/.local/share/fnm`;
+ * GUI apps start with none of those set, so the fallback is what usually hits.
+ */
+function fnmDirectories(environment) {
+  const bases = []
+  const add = (dir) => { if (dir && !bases.includes(dir)) bases.push(dir) }
+  if (environment.FNM_DIR?.trim()) add(environment.FNM_DIR.trim())
+  if (environment.XDG_DATA_HOME?.trim()) add(join(environment.XDG_DATA_HOME.trim(), 'fnm'))
+  add(join(homedir(), '.local', 'share', 'fnm'))
+  return bases
 }
 
 export const parseVersion = (text) => {
