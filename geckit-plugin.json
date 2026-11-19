@@ -1,0 +1,19 @@
+{
+  "apiVersion": 1,
+  "entry": "index.mjs",
+  "provider": {
+    "id": "plugin:zcode",
+    "family": "plugin:zcode",
+    "name": "ZCode",
+    "shortName": "ZCode",
+    "icon": "zcode",
+    "iconPath": "M3 2h7a5 5 0 0 1 0 10H6v2H3Zm3 3v4h4a2 2 0 0 0 0-4Z M8 12h2l4 2-4 2H8Z",
+    "browser": "none",
+    "loginCommand": "zcode login",
+    "planName": "Z.ai Coding Plan",
+    "resumeCommand": "zcode --resume {id}",
+    "localOnly": true,
+    "instructions": "own",
+    "source": "https://github.com/lnetrebskii/geckit-zcode"
+  }
+}
