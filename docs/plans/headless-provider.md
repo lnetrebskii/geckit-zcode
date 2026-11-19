@@ -69,7 +69,8 @@ test/
 ### Finding and starting zcode
 
 - Order: `GECKIT_ZCODE_COMMAND`, PATH, then npm global bins
-  (`~/.nvm/versions/node/*/bin`, Homebrew, `npm prefix -g`).
+  (`~/.nvm/versions/node/*/bin`, fnm's `node-versions/*/installation/bin` and
+  `aliases/default/bin`, Homebrew, `npm prefix -g`).
 - GeckIt is a GUI app with a short PATH, and the person has `zcode` under
   Node 20 too, where it crashes (`node:sqlite`). The launcher's shebang uses
   `env node`, so the child PATH starts with the directory holding the chosen
@@ -213,7 +214,11 @@ echo of the person's message (18), ids-and-outcomes-only logs (20).
 
 ## Decisions taken during implementation (2026-11-19)
 
-- Q1 quota: no public source; `unavailableReason` only.
+- Q1 quota: SOLVED (macOS). The account's own OAuth token, decrypted from the
+  person's ZCode keychain store, authorizes `GET /api/monitor/usage/quota/limit`
+  (the endpoint ZCode Desktop uses). `src/zcode-quota.mjs` reads it, maps the
+  windows and degrades to `unavailableReason`; `GECKIT_ZCODE_NO_QUOTA=1` disables
+  it. Verified live 2026-11-19.
 - Q2 instructions: no per-run system prompt flag; `setInstructions` is a no-op.
 - Q3 goals: `--target` cannot be combined with `-p`; `-p "/goal <objective>"` runs a
   goal and prints only a final `{sessionId, response}` record, no stream.

@@ -13,7 +13,7 @@ Runs your own `zcode` (the `zcode-app-cli` package) as a GeckIt assistant throug
 2. In GeckIt open **Settings → Libraries → Add library** and enter `https://github.com/lnetrebskii/geckit-zcode`.
 3. Enable **ZCode** under **Settings → Assistants** and choose it in a local project.
 
-The plugin finds `zcode` through `GECKIT_ZCODE_COMMAND` (an absolute path), then PATH, then npm global folders (nvm, Homebrew, `~/.local/bin`, `~/.npm-global/bin`). A `zcode` installed under a Node older than 22.19 is skipped, because its runtime cannot start there; the account says so when it is the only one.
+The plugin finds `zcode` through `GECKIT_ZCODE_COMMAND` (an absolute path), then PATH, then npm global folders (nvm, fnm, Homebrew, `~/.local/bin`, `~/.npm-global/bin`). This matters because a GUI-launched GeckIt gets the minimal launchd PATH, without the entries a Node manager adds only to an interactive shell. A `zcode` installed under a Node older than 22.19 is skipped, because its runtime cannot start there; the account says so when it is the only one.
 
 ## How it works
 
@@ -26,10 +26,10 @@ The plugin finds `zcode` through `GECKIT_ZCODE_COMMAND` (an absolute path), then
 - **Goals** run as `zcode -p "/goal <objective>"`. zcode prints only the final answer for goal runs, so a goal turn shows "working" until it finishes. Approval cards still appear during it.
 - **Images** (PNG, JPEG, GIF, WebP) are written to private temporary files, attached with `--attach` and removed after the run.
 - **History, lists and search** come from the plugin's own journal of what it saw, kept beside GeckIt's provider logs in `provider-data/plugin-zcode/`. zcode has no public command that lists sessions, so conversations started outside GeckIt are not listed; open them with `zcode --resume`.
+- **Plan quota** (macOS) is read the way ZCode Desktop reads it, after each turn: the account's own OAuth token from your ZCode credential store authorizes `GET https://api.z.ai/api/monitor/usage/quota/limit`, and GeckIt shows the 5-hour and weekly windows. The CLI has no command for this, so the token is taken from your own login keychain on this machine (`enc:v2:os:` values under the service `ZCode Credential Encryption`) and used only against that endpoint; it is never logged, written down or sent anywhere else. macOS may ask once to let the keychain item be read. Turn it off with `GECKIT_ZCODE_NO_QUOTA=1`, or on any failure, other platform, or a changed credential format GeckIt shows a reason instead of a number.
 
 ## What is not offered
 
-- **Plan quota.** zcode does not report it to other programs. GeckIt shows the reason instead of a number; check the quota in ZCode Desktop.
 - **Model picker.** zcode has no public model list; it runs the model chosen in ZCode.
 - **Send now** during a turn. Headless zcode takes no input mid-run, so GeckIt queues the message.
 - **Fork, Remote Control, browser selection, text correction, MCP listing.**
@@ -39,7 +39,7 @@ The plugin finds `zcode` through `GECKIT_ZCODE_COMMAND` (an absolute path), then
 
 ## Logs
 
-`<GeckIt userData>/provider-logs/plugin-zcode.jsonl` records session ids and outcomes (`turn.started`, `approval.asked`, `turn.ended`, …), never prompts, replies, tool input or credentials.
+`<GeckIt userData>/provider-logs/plugin-zcode.jsonl` records session ids and outcomes (`turn.started`, `approval.asked`, `turn.ended`, …), never prompts, replies, tool input, the plan token or any credential.
 
 ## Development
 

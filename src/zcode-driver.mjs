@@ -203,6 +203,9 @@ class ZcodeConversation {
     this.run = undefined
     run.resolveDone()
     this.next()
+    // The plan quota moves with every turn; a fresh read becomes a live signal.
+    const usage = await this.deps.quota?.afterTurn().catch(() => undefined)
+    if (usage?.quotas !== undefined) this.signal({ kind: 'usage', usage })
   }
 
   async remember(run) {

@@ -10,6 +10,7 @@ import { findZcode, zcodeProgram } from './zcode-cli.mjs'
 import { holdZcode } from './zcode-driver.mjs'
 import { linksIn } from './links.mjs'
 import { Journal, NATIVE_ID, journalFolder } from './zcode-journal.mjs'
+import { Quota } from './zcode-quota.mjs'
 import { modelOverrides } from './model-overrides.mjs'
 
 const FAMILY = 'plugin:zcode'
@@ -44,21 +45,25 @@ const INFO = {
 }
 
 /** What zcode is here, and what it says about the plan: nothing it does not report. */
-function programMembers(zcode) {
+function programMembers(zcode, quota) {
   return {
     account: async () => {
       const found = await zcode()
       if (found.unusable !== undefined) return { provider: FAMILY, here: false, signedIn: undefined, usage: { unavailableReason: found.unusable } }
       const program = await zcodeProgram(found)
-      return { provider: FAMILY, here: program !== undefined, signedIn: undefined, ...(program === undefined ? {} : { program }), usage: { unavailableReason: PLAN_UNAVAILABLE } }
+      const usage = await quota.read().catch(() => ({ unavailableReason: PLAN_UNAVAILABLE }))
+      return { provider: FAMILY, here: program !== undefined, signedIn: undefined, ...(program === undefined ? {} : { program }), usage }
     },
     program: async () => zcodeProgram(await zcode()),
     // zcode has no public command that lists its models; it runs the one the person chose in ZCode.
     models: async () => undefined,
-    limits: async (models) => ({
-      windows: new Map(models.map((model) => [model, modelOverrides.get(model)?.contextWindow])),
-      unavailableReason: PLAN_UNAVAILABLE,
-    }),
+    limits: async (models) => {
+      const usage = await quota.read().catch(() => ({ unavailableReason: PLAN_UNAVAILABLE }))
+      return {
+        windows: new Map(models.map((model) => [model, modelOverrides.get(model)?.contextWindow])),
+        ...(usage.quotas === undefined ? { unavailableReason: usage.unavailableReason ?? PLAN_UNAVAILABLE } : { quotas: usage.quotas }),
+      }
+    },
   }
 }
 
@@ -132,14 +137,14 @@ function goalMembers(journal, drivers, log) {
  * A Driver that exists at once, while zcode is found. Only a message turns a
  * missing zcode into an ended turn; anything else waits or is dropped.
  */
-function holdMember({ zcode, journal, drivers, log }) {
+function holdMember({ zcode, journal, drivers, quota, log }) {
   return (options, hear, left) => {
     const native = nativeId(options.id)
     const forward = (heard) => hear({ ...heard, signals: heard.signals.map((signal) => (signal.kind === 'started' ? { ...signal, session: mine(signal.session) } : signal)) })
     const leave = () => { drivers.delete(native); log('info', 'session.closed', { session: native }); left() }
     const ready = zcode().then((found) => {
       if (found.unusable !== undefined) throw new Error(found.unusable)
-      return holdZcode({ ...options, id: native }, { found, journal, log }, forward, leave)
+      return holdZcode({ ...options, id: native }, { found, journal, quota, log }, forward, leave)
     })
     let held
     void ready.then((one) => { held = one }, () => {})
@@ -166,6 +171,7 @@ export function create(context = {}) {
   const log = (level, event, fields) => { try { context.log?.write(level, event, fields) } catch { /* logging never breaks a turn */ } }
   const journal = new Journal(journalFolder(context.log?.path))
   const drivers = new Map()
+  const quota = new Quota({ log: (level, event, fields) => log(level, event, fields) })
   let finding
   const zcode = () => {
     finding ??= findZcode().then((found) => {
@@ -177,10 +183,10 @@ export function create(context = {}) {
   log('info', 'provider.created')
   return {
     ...INFO,
-    ...programMembers(zcode),
+    ...programMembers(zcode, quota),
     ...journalMembers(journal, log),
     ...goalMembers(journal, drivers, log),
-    hold: holdMember({ zcode, journal, drivers, log }),
+    hold: holdMember({ zcode, journal, drivers, quota, log }),
     remote: async () => { throw new Error('ZCode does not support Remote Control.') },
     mcp: async () => undefined,
     browsers: async () => undefined,

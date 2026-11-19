@@ -9,10 +9,10 @@ Scope: `plugin:zcode` ↔ GeckIt apiVersion 1 at `9a3abda` (v1.265), over `zcode
 | `available`, `localOnly`, `subscriptionOnly`, `images`, `waitForExit` | `true` |
 | `remoteControl` | `false` |
 | `nativeGoals` | `true`: needed so GeckIt moves a new conversation to the `sess_…` id zcode assigns (`started.session`); goals run as `/goal` |
-| `account` | here / program (version, install source, resolved path); `signedIn` unknown until a turn says otherwise; `usage.unavailableReason` for the plan quota |
+| `account` | here / program (version, install source, resolved path); `signedIn` unknown until a turn says otherwise; `usage.quotas` (macOS) or `usage.unavailableReason` |
 | `program` | `zcode --version`, both layers |
 | `models` | `undefined`: no public model list |
-| `limits` | windows from `model-overrides.mjs` only, `unavailableReason` |
+| `limits` | windows from `model-overrides.mjs`; `quotas` (macOS) or `unavailableReason` |
 | `list`, `search`, `has`, `read`, `links` | the plugin's journal of conversations it held |
 | `hidden` | `[]` |
 | `create` | provisional `new-<uuid>`, renamed through `started` |
@@ -44,7 +44,8 @@ Scope: `plugin:zcode` ↔ GeckIt apiVersion 1 at `9a3abda` (v1.265), over `zcode
 | `asks`, `resolved` | from the PreToolUse hook; `line` points at the tool row |
 | `begun` | only for goal runs, which GeckIt did not start with `send` |
 | `ended` | exactly once per run: done / stopped / signedOut / limit / failed |
-| `goal`, `task`, `usage`, `plan`, `held`, `retry`, `mode`, `reasoning` | not emitted: headless zcode does not report them |
+| `usage` | after each turn (macOS), the refreshed plan quota; omitted when unavailable |
+| `goal`, `task`, `plan`, `held`, `retry`, `mode`, `reasoning` | not emitted: headless zcode does not report them |
 
 Items: `theirs` and `thought` per assistant message, `did` per tool call (live, then with its output), `wrote` for successful writes. The person's own message is never echoed live (GeckIt already shows it); it is journaled for `read`.
 
@@ -52,4 +53,5 @@ Items: `theirs` and `thought` per assistant message, `did` per tool call (live, 
 
 - 16 automated tests: recorded live streams replayed through the event mapping; a fake `zcode` driven end to end, including the real hook process and Unix socket; GeckIt's loader checks against the built `index.mjs`.
 - Live, with the person's consent, in scratch folders: plain reply; build-mode denial without the hook; hook-allowed write; goal run output; unknown session id refusal; and a full plugin run (Manual card → allowed → file written, second turn resumed, journal and logs checked) under a GUI-like PATH. Seven small model requests in total.
-- Not verified: the GeckIt renderer with this library installed, sign-in expiry and quota exhaustion against the real service (mapped from error text), and long goal runs.
+- Quota verified live on 2026-11-19: the built plugin's `account()` and `limits()` returned the real 5-hour and weekly windows, read through the keychain token, with the token never logged. The 7 quota unit tests cover mapping, caching, coalescing and graceful failure.
+- Not verified: the GeckIt renderer with this library installed, sign-in expiry and quota exhaustion against the real service (mapped from error text), the keychain prompt on a machine where the item's ACL is stricter, and long goal runs.

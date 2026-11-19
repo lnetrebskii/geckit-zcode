@@ -22,10 +22,28 @@ async function candidates(environment) {
   const versions = await readdir(nvm).catch(() => []);
   versions.sort((a, b) => compareVersions(parseVersion(b), parseVersion(a)));
   for (const version of versions) found.push({ path: join(nvm, version, "bin", "zcode"), from: "npm (nvm)" });
+  for (const fnm of fnmDirectories(environment)) {
+    found.push({ path: join(fnm, "aliases", "default", "bin", "zcode"), from: "npm (fnm default)" });
+    const installed = await readdir(join(fnm, "node-versions")).catch(() => []);
+    installed.sort((a, b) => compareVersions(parseVersion(b), parseVersion(a)));
+    for (const version of installed) {
+      found.push({ path: join(fnm, "node-versions", version, "installation", "bin", "zcode"), from: "npm (fnm)" });
+    }
+  }
   for (const folder of ["/opt/homebrew/bin", "/usr/local/bin", join(homedir(), ".local", "bin"), join(homedir(), ".npm-global", "bin")]) {
     found.push({ path: join(folder, "zcode"), from: "npm" });
   }
   return found;
+}
+function fnmDirectories(environment) {
+  const bases = [];
+  const add = (dir) => {
+    if (dir && !bases.includes(dir)) bases.push(dir);
+  };
+  if (environment.FNM_DIR?.trim()) add(environment.FNM_DIR.trim());
+  if (environment.XDG_DATA_HOME?.trim()) add(join(environment.XDG_DATA_HOME.trim(), "fnm"));
+  add(join(homedir(), ".local", "share", "fnm"));
+  return bases;
 }
 var parseVersion = (text) => {
   const match = /v?(\d+)\.(\d+)\.(\d+)/.exec(text ?? "");
@@ -681,6 +699,8 @@ ${error.message}`;
     this.run = void 0;
     run.resolveDone();
     this.next();
+    const usage = await this.deps.quota?.afterTurn().catch(() => void 0);
+    if (usage?.quotas !== void 0) this.signal({ kind: "usage", usage });
   }
   async remember(run) {
     const record = this.record;
@@ -796,6 +816,126 @@ function linksIn(items) {
   return [...found.values()];
 }
 
+// src/zcode-quota.mjs
+import { execFile as execFile2 } from "node:child_process";
+import { createDecipheriv, createHash } from "node:crypto";
+import { readFile as readFile3 } from "node:fs/promises";
+import { homedir as homedir4 } from "node:os";
+import { join as join5 } from "node:path";
+var SERVICE = "ZCode Credential Encryption";
+var TOKEN_KEY = "oauth:zai:access_token";
+var QUOTA_PATH = "/api/monitor/usage/quota/limit";
+var FRESH_MS = 10 * 6e4;
+var UNAVAILABLE = "ZCode did not report the plan quota.";
+var credentialsPath = (environment) => join5(environment.ZCODE_DATA_BASE_DIR?.trim() || homedir4(), ".zcode", "v2", "credentials.json");
+var quotaUrl = (environment) => `${(environment.ZCODE_BASE_URL?.trim() || "https://api.z.ai").replace(/\/+$/, "")}${QUOTA_PATH}`;
+function readKey(path, run) {
+  const account = createHash("sha256").update(path).digest("hex");
+  return new Promise((resolvePromise, rejectPromise) => {
+    run("security", ["find-generic-password", "-w", "-s", SERVICE, "-a", account], (error, stdout) => {
+      if (error !== null) {
+        rejectPromise(new Error("keychain"));
+        return;
+      }
+      const key = Buffer.from(String(stdout).trim(), "base64url");
+      if (key.length !== 32) {
+        rejectPromise(new Error("key"));
+        return;
+      }
+      resolvePromise(key);
+    });
+  });
+}
+function decryptValue(value, key) {
+  const parts = String(value).split(":");
+  if (parts.length !== 5 || parts[0] !== "enc" || parts[1] !== "v2" || parts[2] !== "os") throw new Error("shape");
+  const [iv, tag, ct] = parts[4].split(".").map((part) => Buffer.from(part, "base64url"));
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  return Buffer.concat([decipher.update(ct), decipher.final()]).toString("utf8");
+}
+function quotaRow(limit) {
+  if (limit === null || typeof limit !== "object") return void 0;
+  const window = Number.isFinite(limit.unit) && Number.isFinite(limit.number) ? limit.unit === 3 && limit.number === 5 ? { id: "five-hour", name: "5-hour" } : limit.unit === 6 && limit.number === 1 ? { id: "weekly", name: "Weekly" } : void 0 : void 0;
+  const named = window ?? (limit.type === "TIME_LIMIT" ? { id: "mcp", name: "MCP" } : { id: `${limit.type ?? "limit"}-${limit.unit ?? 0}-${limit.number ?? 0}`, name: String(limit.type ?? "Limit") });
+  const part = Number.isFinite(limit.percentage) ? Math.max(0, Math.min(1, limit.percentage / 100)) : Number.isFinite(limit.currentValue) && Number.isFinite(limit.usage) && limit.usage > 0 ? limit.currentValue / limit.usage : void 0;
+  return {
+    ...named,
+    ...part === void 0 ? {} : { part },
+    ...Number.isFinite(limit.currentValue) ? { used: limit.currentValue } : {},
+    ...Number.isFinite(limit.remaining) ? { remaining: limit.remaining } : {},
+    ...Number.isFinite(limit.usage) ? { limit: limit.usage } : {},
+    ...Number.isFinite(limit.nextResetTime) ? { resetsAt: limit.nextResetTime } : {},
+    unit: "tokens"
+  };
+}
+function parseQuota(body, measuredAt) {
+  const limits = body?.data?.limits ?? body?.limits;
+  if (!Array.isArray(limits)) return { unavailableReason: UNAVAILABLE, measuredAt };
+  const quotas = limits.map(quotaRow).filter((row) => row !== void 0);
+  if (quotas.length === 0) return { unavailableReason: UNAVAILABLE, measuredAt };
+  return { quotas, measuredAt };
+}
+var Quota = class {
+  constructor({ environment = process.env, run = execFile2, fetch: doFetch = fetch, now = Date.now, readToken, log = () => {
+  } } = {}) {
+    this.environment = environment;
+    this.run = run;
+    this.fetch = doFetch;
+    this.now = now;
+    this.readToken = readToken ?? (() => this.decryptToken());
+    this.log = log;
+    this.cached = void 0;
+    this.flight = void 0;
+  }
+  async decryptToken() {
+    if (this.environment.GECKIT_ZCODE_NO_QUOTA === "1") throw new Error("disabled");
+    if (process.platform !== "darwin") throw new Error("platform");
+    const path = credentialsPath(this.environment);
+    const store = JSON.parse(await readFile3(path, "utf8"));
+    if (typeof store[TOKEN_KEY] !== "string") throw new Error("token");
+    const key = await readKey(path, this.run);
+    return decryptValue(store[TOKEN_KEY], key);
+  }
+  async fetchOnce() {
+    const measuredAt = this.now();
+    let token;
+    try {
+      token = await this.readToken();
+    } catch {
+      return { unavailableReason: UNAVAILABLE, measuredAt };
+    }
+    try {
+      const response = await this.fetch(quotaUrl(this.environment), { headers: { Authorization: token, "X-ZCode-App-Version": "0.17.1", Accept: "application/json" } });
+      const body = await response.json().catch(() => void 0);
+      if (!response.ok || !(body?.code === 0 || body?.code === 200)) return { unavailableReason: body?.msg ? `ZCode quota: ${body.msg}` : UNAVAILABLE, measuredAt };
+      return parseQuota(body, measuredAt);
+    } catch {
+      return { unavailableReason: UNAVAILABLE, measuredAt };
+    } finally {
+      token = void 0;
+    }
+  }
+  /** The quota, fresh within ten minutes, concurrent reads coalesced. */
+  async read() {
+    if (this.cached !== void 0 && this.now() - this.cached.measuredAt < FRESH_MS) return this.cached;
+    this.flight ??= this.fetchOnce().then((usage) => {
+      this.cached = usage;
+      this.flight = void 0;
+      return usage;
+    }, (error) => {
+      this.flight = void 0;
+      throw error;
+    });
+    return this.flight;
+  }
+  /** After a turn: refresh unless a read just happened, for a live usage signal. */
+  async afterTurn() {
+    this.cached = void 0;
+    return this.read().catch(() => void 0);
+  }
+};
+
 // src/model-overrides.mjs
 var modelOverrides = /* @__PURE__ */ new Map();
 
@@ -828,21 +968,25 @@ var INFO = {
   idleMs: 10 * 6e4,
   waitForExit: true
 };
-function programMembers(zcode) {
+function programMembers(zcode, quota) {
   return {
     account: async () => {
       const found = await zcode();
       if (found.unusable !== void 0) return { provider: FAMILY, here: false, signedIn: void 0, usage: { unavailableReason: found.unusable } };
       const program = await zcodeProgram(found);
-      return { provider: FAMILY, here: program !== void 0, signedIn: void 0, ...program === void 0 ? {} : { program }, usage: { unavailableReason: PLAN_UNAVAILABLE } };
+      const usage = await quota.read().catch(() => ({ unavailableReason: PLAN_UNAVAILABLE }));
+      return { provider: FAMILY, here: program !== void 0, signedIn: void 0, ...program === void 0 ? {} : { program }, usage };
     },
     program: async () => zcodeProgram(await zcode()),
     // zcode has no public command that lists its models; it runs the one the person chose in ZCode.
     models: async () => void 0,
-    limits: async (models) => ({
-      windows: new Map(models.map((model) => [model, modelOverrides.get(model)?.contextWindow])),
-      unavailableReason: PLAN_UNAVAILABLE
-    })
+    limits: async (models) => {
+      const usage = await quota.read().catch(() => ({ unavailableReason: PLAN_UNAVAILABLE }));
+      return {
+        windows: new Map(models.map((model) => [model, modelOverrides.get(model)?.contextWindow])),
+        ...usage.quotas === void 0 ? { unavailableReason: usage.unavailableReason ?? PLAN_UNAVAILABLE } : { quotas: usage.quotas }
+      };
+    }
   };
 }
 function journalMembers(journal, log) {
@@ -909,7 +1053,7 @@ function goalMembers(journal, drivers, log) {
     }
   };
 }
-function holdMember({ zcode, journal, drivers, log }) {
+function holdMember({ zcode, journal, drivers, quota, log }) {
   return (options, hear, left) => {
     const native = nativeId(options.id);
     const forward = (heard) => hear({ ...heard, signals: heard.signals.map((signal) => signal.kind === "started" ? { ...signal, session: mine(signal.session) } : signal) });
@@ -920,7 +1064,7 @@ function holdMember({ zcode, journal, drivers, log }) {
     };
     const ready = zcode().then((found) => {
       if (found.unusable !== void 0) throw new Error(found.unusable);
-      return holdZcode({ ...options, id: native }, { found, journal, log }, forward, leave);
+      return holdZcode({ ...options, id: native }, { found, journal, quota, log }, forward, leave);
     });
     let held;
     void ready.then((one) => {
@@ -963,6 +1107,7 @@ function create(context = {}) {
   };
   const journal = new Journal(journalFolder(context.log?.path));
   const drivers = /* @__PURE__ */ new Map();
+  const quota = new Quota({ log: (level, event, fields) => log(level, event, fields) });
   let finding;
   const zcode = () => {
     finding ??= findZcode().then((found) => {
@@ -974,10 +1119,10 @@ function create(context = {}) {
   log("info", "provider.created");
   return {
     ...INFO,
-    ...programMembers(zcode),
+    ...programMembers(zcode, quota),
     ...journalMembers(journal, log),
     ...goalMembers(journal, drivers, log),
-    hold: holdMember({ zcode, journal, drivers, log }),
+    hold: holdMember({ zcode, journal, drivers, quota, log }),
     remote: async () => {
       throw new Error("ZCode does not support Remote Control.");
     },

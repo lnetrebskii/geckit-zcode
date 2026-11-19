@@ -21,6 +21,7 @@ export async function world() {
   const logs = []
   const environment = {
     HOME: home,
+    ZCODE_DATA_BASE_DIR: home,
     GECKIT_ZCODE_COMMAND: join(bin, 'zcode'),
     FAKE_ZCODE_STATE: join(base, 'state'),
     FAKE_ZCODE_LOG: join(base, 'calls.jsonl'),
