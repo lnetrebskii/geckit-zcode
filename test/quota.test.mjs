@@ -20,14 +20,16 @@ test('the live payload maps to a 5-hour and a weekly window', () => {
   const { quotas } = parseQuota(LIVE, 1000)
   const five = quotas.find((q) => q.id === 'five-hour')
   const week = quotas.find((q) => q.id === 'weekly')
-  assert.deepEqual(five, { id: 'five-hour', name: '5-hour', part: 0, used: 0, remaining: 2000, limit: 2000, unit: 'tokens' })
-  assert.deepEqual(week, { id: 'weekly', name: 'Weekly', part: 0.95, used: 9536, remaining: 463, limit: 10000, resetsAt: 1795590793984, unit: 'tokens' })
+  // Percentage only, like Claude's plan windows — no raw credit counts beside it.
+  assert.deepEqual(five, { id: 'five-hour', name: '5-hour', part: 0 })
+  assert.deepEqual(week, { id: 'weekly', name: 'Weekly', part: 0.95, resetsAt: 1795590793984 })
 })
 
 test('a TIME_LIMIT entry becomes the MCP row; percentage clamps to a fraction', () => {
   const row = quotaRow({ type: 'TIME_LIMIT', unit: 5, number: 1, usage: 100, currentValue: 120, remaining: 0, percentage: 120 })
   assert.equal(row.id, 'mcp')
   assert.equal(row.part, 1)
+  assert.equal('remaining' in row, false)
 })
 
 test('a response without limits is unavailable, not empty', () => {

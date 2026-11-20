@@ -56,16 +56,16 @@ export function quotaRow(limit) {
       : limit.unit === 6 && limit.number === 1 ? { id: 'weekly', name: 'Weekly' } : undefined)
     : undefined
   const named = window ?? (limit.type === 'TIME_LIMIT' ? { id: 'mcp', name: 'MCP' } : { id: `${limit.type ?? 'limit'}-${limit.unit ?? 0}-${limit.number ?? 0}`, name: String(limit.type ?? 'Limit') })
+  // A spent fraction and a reset time, the way Claude's plan windows read. The
+  // raw credit counts are left out on purpose: a percentage beside "463 left"
+  // is two readings of one thing and only confuses.
   const part = Number.isFinite(limit.percentage) ? Math.max(0, Math.min(1, limit.percentage / 100))
-    : Number.isFinite(limit.currentValue) && Number.isFinite(limit.usage) && limit.usage > 0 ? limit.currentValue / limit.usage : undefined
+    : Number.isFinite(limit.currentValue) && Number.isFinite(limit.usage) && limit.usage > 0 ? Math.max(0, Math.min(1, limit.currentValue / limit.usage)) : undefined
+  if (part === undefined) return undefined
   return {
     ...named,
-    ...(part === undefined ? {} : { part }),
-    ...(Number.isFinite(limit.currentValue) ? { used: limit.currentValue } : {}),
-    ...(Number.isFinite(limit.remaining) ? { remaining: limit.remaining } : {}),
-    ...(Number.isFinite(limit.usage) ? { limit: limit.usage } : {}),
+    part,
     ...(Number.isFinite(limit.nextResetTime) ? { resetsAt: limit.nextResetTime } : {}),
-    unit: 'tokens',
   }
 }
 

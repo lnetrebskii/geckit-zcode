@@ -858,15 +858,12 @@ function quotaRow(limit) {
   if (limit === null || typeof limit !== "object") return void 0;
   const window = Number.isFinite(limit.unit) && Number.isFinite(limit.number) ? limit.unit === 3 && limit.number === 5 ? { id: "five-hour", name: "5-hour" } : limit.unit === 6 && limit.number === 1 ? { id: "weekly", name: "Weekly" } : void 0 : void 0;
   const named = window ?? (limit.type === "TIME_LIMIT" ? { id: "mcp", name: "MCP" } : { id: `${limit.type ?? "limit"}-${limit.unit ?? 0}-${limit.number ?? 0}`, name: String(limit.type ?? "Limit") });
-  const part = Number.isFinite(limit.percentage) ? Math.max(0, Math.min(1, limit.percentage / 100)) : Number.isFinite(limit.currentValue) && Number.isFinite(limit.usage) && limit.usage > 0 ? limit.currentValue / limit.usage : void 0;
+  const part = Number.isFinite(limit.percentage) ? Math.max(0, Math.min(1, limit.percentage / 100)) : Number.isFinite(limit.currentValue) && Number.isFinite(limit.usage) && limit.usage > 0 ? Math.max(0, Math.min(1, limit.currentValue / limit.usage)) : void 0;
+  if (part === void 0) return void 0;
   return {
     ...named,
-    ...part === void 0 ? {} : { part },
-    ...Number.isFinite(limit.currentValue) ? { used: limit.currentValue } : {},
-    ...Number.isFinite(limit.remaining) ? { remaining: limit.remaining } : {},
-    ...Number.isFinite(limit.usage) ? { limit: limit.usage } : {},
-    ...Number.isFinite(limit.nextResetTime) ? { resetsAt: limit.nextResetTime } : {},
-    unit: "tokens"
+    part,
+    ...Number.isFinite(limit.nextResetTime) ? { resetsAt: limit.nextResetTime } : {}
   };
 }
 function parseQuota(body, measuredAt) {
